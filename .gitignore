@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+
+#PyCharm
+.idea/
+
+#Docker
+.docker/
+
+#Baza danych (lokalna)
+postgres_data/
+
+#env
+
+.env
