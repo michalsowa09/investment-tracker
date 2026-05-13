@@ -3,9 +3,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import engine, get_db
 from .models import Base, Asset
 from sqlalchemy.future import select
+import httpx
 
 app = FastAPI(title = "Monitor inwestycji") #Tworze swoją aplikację i nadaje jej tytuł.
 
+async def download_usd_rate():
+    #Adres api NBP dla kursu dolara (format JSON):
+    url = "https://api.nbp.pl/api/exchangerates/rates/a/usd/?format=json"
+
+    #Tworzenie "klienta" - który zadzwoni do banku:
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+
+        #Sprawdzenie, czy bank poprawnie odpowiedział
+        if response.status_code == 200:
+            data = response.json()
+
+            #Wyciągam samą liczbę(kurs) z ich JSONA:
+            rate = data["rates"][0]["mid"]
+            return rate
+        else:
+            #Jeśli bank nie odpowie - zwracam domyślną wartość - ja ustawiam 4
+            return 4.0
 
 @app.on_event("startup")#Za każdym razem przy starcie kontenera
 async def startup():
@@ -18,7 +37,7 @@ async def root():# To wtedy uruchamia mi tę funkcję.
     return {"message": "System działa"}
 
 #ENDPOINT DO ZAPISYWANIA DANYCH
-@app.post("/assets")
+@app.post("/aktywa")
 async def create_asset(name: str, ticker: str, amount: float, price: float, db:
 AsyncSession = Depends(get_db)):
     #Tworznie obiektu klasy asset
@@ -33,8 +52,7 @@ AsyncSession = Depends(get_db)):
     return new_asset
 
 #ENDPOINT DO POBIERANIA WSZYSTKICH DANYCH:
-
-@app.get("/assets")
+@app.get("/aktywa")
 async def get_all_assets(db: AsyncSession = Depends(get_db)):
     #tworzenie zapytania - pobranie wszystkiego z tabeli asset:
     query = select(Asset)
@@ -46,7 +64,7 @@ async def get_all_assets(db: AsyncSession = Depends(get_db)):
     return assets_list
 
 #ENDPOINT LICZĄCY ŁĄCZNĄ WARTOŚĆ ZAKUPÓW:
-@app.get("/total-value")
+@app.get("/podsumowanie")
 async def get_total_value(db: AsyncSession = Depends(get_db)):
     query = select(Asset)
     #Wykonuje zapytanie do bazy danych:
@@ -63,4 +81,27 @@ async def get_total_value(db: AsyncSession = Depends(get_db)):
         "Liczba_aktywów": len(assets_list)
     }
 
+#ENDPOINT PRZELICZAJĄCY AKTYWA NA USD PO AKTUALNYM KURSIE:
+@app.get("/wycena-usd")
+async def get_usd_valuation(db: AsyncSession = Depends(get_db)):
 
+    #1. Pobieram kurs z NBP
+    usd_rate = await download_usd_rate()
+
+    #2. Pobieram aktywa z bazy danych:
+    query = select(Asset)
+    result = await db.execute(query)
+    assets_list = result.scalars().all()
+
+    #Liczę wartość w złotówkach:
+    pln_sum = sum(assets_list[i].amount * assets_list[i].purchase_price for i in range(len(assets_list)))
+
+    #Przeliczam na dolary po aktualnym kursie:
+    usd_sum = pln_sum/usd_rate
+
+    return {
+        "Aktualny_kurs_nbp": usd_rate,
+        "Suma_w_pln": pln_sum,
+        "Suma_w_usd": usd_sum,
+        "Wiadomosc": "Dane pobrano z NBP"
+    }
