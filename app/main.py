@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from .database import engine, get_db
 from .models import Base, Asset
@@ -13,17 +13,19 @@ async def download_usd_rate():
 
     #Tworzenie "klienta" - który zadzwoni do banku:
     async with httpx.AsyncClient() as client:
-        response = await client.get(url)
+        try:
+            response = await client.get(url)
 
-        #Sprawdzenie, czy bank poprawnie odpowiedział
-        if response.status_code == 200:
-            data = response.json()
+            #Sprawdzenie, czy bank poprawnie odpowiedział
+            if response.status_code == 200:
+                data = response.json()
 
-            #Wyciągam samą liczbę(kurs) z ich JSONA:
-            rate = data["rates"][0]["mid"]
-            return rate
-        else:
+                #Wyciągam samą liczbę(kurs) z ich JSONA:
+                rate = data["rates"][0]["mid"]
+                return rate
+        except(httpx.HTTPStatusError, httpx.RequestError, keyError):
             #Jeśli bank nie odpowie - zwracam domyślną wartość - ja ustawiam 4
+            print("BŁĄD: Nie udałom się pobrać kursu NBP, używam kursu zastępczego: 4.0")
             return 4.0
 
 @app.on_event("startup")#Za każdym razem przy starcie kontenera
@@ -105,3 +107,20 @@ async def get_usd_valuation(db: AsyncSession = Depends(get_db)):
         "Suma_w_usd": usd_sum,
         "Wiadomosc": "Dane pobrano z NBP"
     }
+
+@app.delete("/aktywa/{id_aktywa}")
+async def remove_asset(id_aktywa: int, db: AsyncSession = Depends(get_db)):
+    #1. Szukam aktywa o konkretnym ID:
+    query = select(Asset).where(Asset.id == id_aktywa)
+    result = await db.execute(query)
+    aktywo = result.scalar_one_or_none()#Zwóci albo jeden konkretnyn rekord, albo none - czyli nic
+
+    #3. Jeżeli nie ma takiego aktywa - rzucam błędem 404:
+    if aktywo is None:
+        raise HTTPException(status_code=404, detail = "Nie ma takiego aktywa w bazie")
+
+    #3. Jeżeli jest, to usuwam:
+    await db.delete(aktywo)
+    await db.commit()#wysyłam do bazy
+
+    return {"message": f"Aktywo o ID {id_aktywa} zostało usunięte"}
