@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import engine, get_db
 from .models import Base, Asset
 from sqlalchemy.future import select
+from sqlalchemy import or_
 import httpx
 
 app = FastAPI(title = "Monitor inwestycji") #Tworze swoją aplikację i nadaje jej tytuł.
@@ -108,19 +109,68 @@ async def get_usd_valuation(db: AsyncSession = Depends(get_db)):
         "Wiadomosc": "Dane pobrano z NBP"
     }
 
-@app.delete("/aktywa/{id_aktywa}")
-async def remove_asset(id_aktywa: int, db: AsyncSession = Depends(get_db)):
+#ENDPOINT USUWAJĄCY AKTYWO O KONKRETNYM ID:
+@app.delete("/aktywa/{id_asset}")
+async def remove_asset(id_asset: int, db: AsyncSession = Depends(get_db)):
     #1. Szukam aktywa o konkretnym ID:
-    query = select(Asset).where(Asset.id == id_aktywa)
+    query = select(Asset).where(Asset.id == id_asset)
     result = await db.execute(query)
-    aktywo = result.scalar_one_or_none()#Zwóci albo jeden konkretnyn rekord, albo none - czyli nic
+    asset = result.scalar_one_or_none()#Zwóci albo jeden konkretnyn rekord, albo none - czyli nic
 
     #3. Jeżeli nie ma takiego aktywa - rzucam błędem 404:
-    if aktywo is None:
+    if asset is None:
         raise HTTPException(status_code=404, detail = "Nie ma takiego aktywa w bazie")
 
     #3. Jeżeli jest, to usuwam:
-    await db.delete(aktywo)
-    await db.commit()#wysyłam do bazy
+    await db.delete(asset)
+    await db.commit()#wysyłam do bazy (wykonanie transakcji).
 
-    return {"message": f"Aktywo o ID {id_aktywa} zostało usunięte"}
+    return {"message": f"Aktywo o ID {id_asset} zostało usunięte"}
+
+#ENDPOINT AKTUALIZUJĄCY AKTYWO O KONKRETNYM ID:
+@app.put("/aktywa/{id_asset}/dokup")
+async def buy_more(id_asset: int, added_amount: float, added_price: float, db: AsyncSession = Depends(get_db)):
+    #1. Pobieram z bazy to, co aktualnie się w niej znajduje:
+    query = select(Asset).where(Asset.id == id_asset)
+    result = await db.execute(query)
+    asset = result.scalar_one_or_none()
+
+    if asset is None:
+        raise HTTPException(status_code = 404, detail = "Nie ma takiego aktywa - błędnę ID")
+
+    #2.Liczenie:
+    old_value = asset.amount * asset.purchase_price #Ile zostało wydane wcześniej
+    new_value = added_amount * added_price #Ile zostaje wydane teraz
+
+    summary = asset.amount + added_amount #Suma sztuk
+    new_avarage_price = (old_value + new_value) / summary
+
+    #3. Nadpisanie staryh pul nowymi wartościami:
+
+    asset.amount = summary
+    asset.purchase_price = new_avarage_price
+
+    await db.commit()
+    await db.refresh(asset)
+
+    return {
+        "Komunikat":"Pomyślnie dokupiono i przeliczono cenę",
+        "Nowy_stan": asset
+    }
+
+#ENDPOINT - WYSZUKIWARKA (FILTROWANIE DANYCH):
+@app.get("/aktywa/szukaj")
+async def search_asset(phrase: str, db: AsyncSession = Depends(get_db)):
+    #1. Tworze zapytanie z filtrem
+    #ilike - szukanie tekstu bez względu na wilekość liter
+    #%{phrase}% - coś może być przed frazą i po niej
+
+    query = select(Asset).where(or_(Asset.name.ilike(f"%{phrase}%"), Asset.ticker.ilike(f"%{phrase}%")))
+
+    #Wykonanie zapytania:
+    result = await db.execute(query)
+    found = result.scalars().all()
+    return {
+        "Wynik": found,
+        "Liczba_znalezionych": len(found)
+    }
