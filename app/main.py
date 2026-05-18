@@ -8,26 +8,33 @@ import httpx
 
 app = FastAPI(title = "Monitor inwestycji") #Tworze swoją aplikację i nadaje jej tytuł.
 
-async def download_usd_rate():
-    #Adres api NBP dla kursu dolara (format JSON):
-    url = "https://api.nbp.pl/api/exchangerates/rates/a/usd/?format=json"
+async def download_rate(currency: str):
+    #Adres api NBP (format JSON) - teraz waluta jest zmienna:
+    url = f"https://api.nbp.pl/api/exchangerates/rates/a/{currency}/?format=json"
 
     #Tworzenie "klienta" - który zadzwoni do banku:
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url)
+            response = await client.get(url, timeout=5.0)
 
-            #Sprawdzenie, czy bank poprawnie odpowiedział
-            if response.status_code == 200:
-                data = response.json()
+            #To polecenie samo rzuci błędem, jeśli kod to np. 404 lub 500
+            response.raise_for_status()
 
-                #Wyciągam samą liczbę(kurs) z ich JSONA:
-                rate = data["rates"][0]["mid"]
-                return rate
-        except(httpx.HTTPStatusError, httpx.RequestError, keyError):
-            #Jeśli bank nie odpowie - zwracam domyślną wartość - ja ustawiam 4
-            print("BŁĄD: Nie udałom się pobrać kursu NBP, używam kursu zastępczego: 4.0")
-            return 4.0
+            data = response.json()
+            rate = data["rates"][0]["mid"]
+            return rate
+
+        except httpx.HTTPStatusError as e:
+            print(f"BŁĄD API: NBP zwrócił kod {e.response.status_code} dla waluty {currency}")
+            return None
+        except httpx.RequestError as e:
+            print(f"BŁĄD POŁĄCZENIA: Nie można połączyć się z serwerem NBP: {e}")
+            return None
+        except (KeyError, IndexError) as e:
+            print(f"BŁAD DANYCH: Nieoczekiwany format JSON z NBP: {e}")
+        except Exception as e:
+            print(f"NIEOCZEKIWANY BŁĄD: {e}")
+            return None
 
 @app.on_event("startup")#Za każdym razem przy starcie kontenera
 async def startup():
@@ -84,29 +91,31 @@ async def get_total_value(db: AsyncSession = Depends(get_db)):
         "Liczba_aktywów": len(assets_list)
     }
 
-#ENDPOINT PRZELICZAJĄCY AKTYWA NA USD PO AKTUALNYM KURSIE:
-@app.get("/wycena-usd")
-async def get_usd_valuation(db: AsyncSession = Depends(get_db)):
+#ENDPOINT PRZELICZAJĄCY AKTYWA (UNIWERSLANY) PO AKTUALNYM KURSIE:
+@app.get("/wycena/{kod_waluty}")
+async def wallet_pricing(currency: str, db: AsyncSession = Depends(get_db)):
+    #Pobieranie kursu wybranej waluty (np. eur, isd, gpb):
+    rate = await download_rate(currency.lower())
+    if rate is None:
+        raise HTTPException(status_code = 404, detail = f"NBP nie obsługuje waluty o kodzie: {currency}")
 
-    #1. Pobieram kurs z NBP
-    usd_rate = await download_usd_rate()
+    #Pobranie kursu aktywa i liczenie sumy w PLN
 
-    #2. Pobieram aktywa z bazy danych:
     query = select(Asset)
     result = await db.execute(query)
-    assets_list = result.scalars().all()
+    assets = result.scalars().all()#lista obiektów
 
-    #Liczę wartość w złotówkach:
-    pln_sum = sum(assets_list[i].amount * assets_list[i].purchase_price for i in range(len(assets_list)))
+    sum_pln = sum(a.amount * a.purchase_price for a in assets)
 
-    #Przeliczam na dolary po aktualnym kursie:
-    usd_sum = pln_sum/usd_rate
+    #Przeliczenie na wybraną walutę:
+    foreign_sum = sum_pln / rate
 
     return {
-        "Aktualny_kurs_nbp": usd_rate,
-        "Suma_w_pln": pln_sum,
-        "Suma_w_usd": usd_sum,
-        "Wiadomosc": "Dane pobrano z NBP"
+        "Waluta": currency.upper(),
+        "Kurs_NBP": rate,
+        "Suma_w_pln": round(sum_pln, 2),
+        "Wycena_w_obcej_walucie (pln)": round(foreign_sum, 2),
+        "komunikat":f"Wycena na podstawie kursu średniego NBP dla: {currency.upper()}"
     }
 
 #ENDPOINT USUWAJĄCY AKTYWO O KONKRETNYM ID:
