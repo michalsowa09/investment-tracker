@@ -15,8 +15,8 @@ class Asset(Base):
     purchase_price = Column(Float)#np. 45000.0
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    #Tutaj tak jakby mówię, że "asset - ma wiele transakcji"
-    transactions = relationship("Transaction", back_populates="owner")
+    # To sprawi, że usunięcie Asset usunie też jego historię transakcji
+    transactions = relationship("Transaction", back_populates="owner", cascade="all, delete-orphan")
 
 class Transaction(Base):
     __tablename__ = "transaction"
@@ -24,5 +24,5 @@ class Transaction(Base):
     asset_id = Column(Integer, ForeignKey("asset.id")) #Połączenie z asset
     amount = Column(Float)
     price_at_date = Column(Float)
-    date = created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     owner = relationship("Asset", back_populates="transactions")

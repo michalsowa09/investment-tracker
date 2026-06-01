@@ -5,6 +5,7 @@ from .models import Base, Asset, Transaction
 from sqlalchemy.future import select
 from sqlalchemy import or_
 import httpx
+from .schemas import AssetCreate, AssetResponse
 
 app = FastAPI(title = "Monitor inwestycji") #Tworze swoją aplikację i nadaje jej tytuł.
 
@@ -47,16 +48,24 @@ async def root():# To wtedy uruchamia mi tę funkcję.
     return {"message": "System działa"}
 
 #ENDPOINT DO ZAPISYWANIA DANYCH
-@app.post("/aktywa")
-async def create_asset(name: str, ticker: str, amount: float, price: float, db:
-AsyncSession = Depends(get_db)):
-    #Tworznie obiektu klasy asset
-    new_asset = Asset(name = name, ticker = ticker, amount = amount, purchase_price = price)
+@app.post("/aktywa", response_model=AssetResponse)
+async def create_asset(asset_data: AssetCreate, db: AsyncSession = Depends(get_db)):
+    #Tworznie obiektu klasy asset - dane biorę z obiektu asset_data:
+    new_asset = Asset(
+        name = asset_data.name,
+        ticker = asset_data.ticker,
+        amount = asset_data.amount,
+        purchase_price = asset_data.purchase_price
+    )
     #Dodaję to do sesji - planuję to zapisać.
     db.add(new_asset)
     await db.flush() #pobiera ID zanim zrobi commit
     #Tworzenie śladu w historii:
-    history = Transaction(asset_id = new_asset.id, amount = amount, price_at_date = price)
+    history = Transaction(
+        asset_id = new_asset.id,
+        amount = asset_data.amount,
+        price_at_date = asset_data.purchase_price,
+    )
     db.add(history) #Dodaję to do sesji
     #Wysyłam dane do postgresa.
     await db.commit()
