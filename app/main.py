@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from .database import engine, get_db
-from .models import Base, Asset
+from .models import Base, Asset, Transaction
 from sqlalchemy.future import select
 from sqlalchemy import or_
 import httpx
@@ -54,6 +54,10 @@ AsyncSession = Depends(get_db)):
     new_asset = Asset(name = name, ticker = ticker, amount = amount, purchase_price = price)
     #Dodaję to do sesji - planuję to zapisać.
     db.add(new_asset)
+    await db.flush() #pobiera ID zanim zrobi commit
+    #Tworzenie śladu w historii:
+    history = Transaction(asset_id = new_asset.id, amount = amount, price_at_date = price)
+    db.add(history) #Dodaję to do sesji
     #Wysyłam dane do postgresa.
     await db.commit()
     #Robię odświeżenie - czyli mówię pobierz z bazy to co zapisałem i uzupełnij mój obiekt o ewentualne braki.
@@ -183,3 +187,8 @@ async def search_asset(phrase: str, db: AsyncSession = Depends(get_db)):
         "Wynik": found,
         "Liczba_znalezionych": len(found)
     }
+@app.get("/historia")
+async def get_all_transactions(db: AsyncSession = Depends(get_db)):
+    query = select(Transaction)
+    result = await db.execute(query)
+    return result.scalars().all()
