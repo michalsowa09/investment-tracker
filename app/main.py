@@ -201,3 +201,52 @@ async def get_all_transactions(db: AsyncSession = Depends(get_db)):
     query = select(Transaction)
     result = await db.execute(query)
     return result.scalars().all()
+
+
+@app.get("/portfel/analiza")
+async def get_portfolio_analysis(db: AsyncSession = Depends(get_db)):
+    # 1. Pobieram aktywa z bazy:
+    query = select(Asset)
+    result = await db.execute(query)
+    assets = result.scalars().all()
+
+    analysis = []
+    total_invested = 0
+    total_current_value = 0
+
+    for a in assets:
+        invested = a.amount * a.purchase_price
+
+        # Pobieram kurs dla konkretnego tickera:
+        current_unit_price = await download_rate(a.ticker.lower())
+
+        # Jeśli NBP nie ma waluty, używam ceny zakupu (żeby nie było np. -99%):
+        if current_unit_price is None:
+            current_unit_price = a.purchase_price
+
+        current_value = a.amount * current_unit_price
+        profit_loss = current_value - invested
+
+        total_invested += invested
+        total_current_value += current_value
+
+        analysis.append({
+            "nazwa": a.name,
+            "ilosc": a.amount,
+            "koszt_zakupu_total": round(invested, 2),
+            "wartosc_biezaca_total": round(current_value, 2),
+            "zysk_strata": round(profit_loss, 2),
+            "procent": round((profit_loss / invested * 100), 2) if invested > 0 else 0
+        })
+
+    return {
+        "podsumowanie_portfela": {
+            "calkowity_koszt": round(total_invested, 2),
+            "calkowita_wartosc": round(total_current_value, 2),
+            "laczny_zysk_strata": round(total_current_value - total_invested, 2)
+        },
+        "szczegoly": analysis
+    }
+
+
+
