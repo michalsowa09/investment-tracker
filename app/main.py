@@ -6,6 +6,9 @@ from sqlalchemy.future import select
 from sqlalchemy import or_
 import httpx
 from .schemas import AssetCreate, AssetResponse
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi import Request
 
 app = FastAPI(title = "Monitor inwestycji") #Tworze swoją aplikację i nadaje jej tytuł.
 
@@ -43,9 +46,22 @@ async def startup():
         #To stworzy bazę danych w Postgresie nawet jak jej nie ma:
         await conn.run_sync(Base.metadata.create_all)
 
-@app.get("/") #"Jeśli ktoś wejdzie na adres główny mojego serwera..."
-async def root():# To wtedy uruchamia mi tę funkcję.
-    return {"message": "System działa"}
+templates = Jinja2Templates(directory="app/templates")
+@app.get("/", response_class=HTMLResponse) #"Jeśli ktoś wejdzie na adres główny mojego serwera..."
+async def home(request: Request, db: AsyncSession = Depends(get_db)):
+    #Pobieram dane z mojej funkcji analizy, którą już mam:
+    analysis = await get_portfolio_analysis(db)
+
+    #pobieram surowe aktywa do tabelki:
+    query = select(Asset)
+    res = await db.execute(query)
+    all_assets = res.scalars().all()
+
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "podsumowanie": analysis["podsumowanie_portfela"],
+        "aktywa": all_assets
+    })
 
 #ENDPOINT DO ZAPISYWANIA DANYCH
 @app.post("/aktywa", response_model=AssetResponse)

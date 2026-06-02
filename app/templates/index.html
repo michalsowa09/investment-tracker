@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="pls">
+<head>
+    <meta charset="utf-8">
+    <title>Monitor Inwestycji</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <div class="container py-5">
+        <h1 class="mb-4">Monitor Inwestycji</h1>
+        <div class="row mb-4">
+            <div class="col md-6">
+                <div class="card bg-primary text-white shadow">
+                    <div class="card-body">
+                        <h5>Suma zainwestowana (PLN)</h5>
+                        <h3>{{ podsumowanie.calkowity_koszt }} zł</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col md-6">
+                <div class="card bg-success text-white shadow">
+                    <div class="card-body">
+                        <h5>Aktualna wartość portfela</h5>
+                        <h3>{{ podsumowanie.calkowita_wartosc }} zł</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <table class="table tablke-dark table-hover">
+            <thead>
+                <tr>
+                    <th>Nazwa</th>
+                    <th>Ticker</th>
+                    <th>Ilość</th>
+                    <th>Cena zakupu</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in aktywa %}
+                <tr>
+                    <td>{{ a.name }}</td>
+                    <td><span class="badge bg-info">{{ a.ticker }}</span></td>
+                    <td>{{ a.amount }}</td>
+                    <td>{{ a.purchase_price }} zł</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
