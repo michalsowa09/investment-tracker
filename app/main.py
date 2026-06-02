@@ -1,19 +1,20 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
-from .database import engine, get_db
-from .models import Base, Asset, Transaction
 from sqlalchemy.future import select
 from sqlalchemy import or_
 import httpx
+# AssetCreate i AssetResponse zostają dla Swaggera, ale POST ich nie używa
 from .schemas import AssetCreate, AssetResponse
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi import Request
-
+from .database import engine, get_db
+from .models import Base, Asset, Transaction
 app = FastAPI(title = "Monitor inwestycji") #Tworze swoją aplikację i nadaje jej tytuł.
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 async def download_rate(currency: str):
-    #Adres api NBP (format JSON) - teraz waluta jest zmienna:
+    #Adres api NBP (format JSON) - waluta jest zmienna:
     url = f"https://api.nbp.pl/api/exchangerates/rates/a/{currency}/?format=json"
 
     #Tworzenie "klienta" - który zadzwoni do banku:
@@ -40,55 +41,117 @@ async def download_rate(currency: str):
             print(f"NIEOCZEKIWANY BŁĄD: {e}")
             return None
 
+#Funkcja do pobierania historii NBP:
+async def get_nbp_history(currency: str):
+    url = f"https://api.nbp.pl/api/exchangerates/rates/a/{currency}/last/7/?format=json"
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "dates": [r["effectiveDate"] for r in data["rates"]],
+                    "rates": [r["mid"] for r in data["rates"]]
+                }
+            return {"dates": [], "rates": []}
+        except Exception:
+            return {"dates": [], "rates": []}
+
+
 @app.on_event("startup")#Za każdym razem przy starcie kontenera
 async def startup():
     async with engine.begin() as conn:
         #To stworzy bazę danych w Postgresie nawet jak jej nie ma:
         await conn.run_sync(Base.metadata.create_all)
 
+
 templates = Jinja2Templates(directory="app/templates")
-@app.get("/", response_class=HTMLResponse) #"Jeśli ktoś wejdzie na adres główny mojego serwera..."
+
+@app.get("/", response_class=HTMLResponse)
 async def home(request: Request, db: AsyncSession = Depends(get_db)):
-    #Pobieram dane z mojej funkcji analizy, którą już mam:
-    analysis = await get_portfolio_analysis(db)
+    # 1. Pobieram analizę
+    analiza = await get_portfolio_analysis(db)
 
-    #pobieram surowe aktywa do tabelki:
-    query = select(Asset)
-    res = await db.execute(query)
-    all_assets = res.scalars().all()
+    # 2. Nazwy kluczy dla wykresu:
+    chart_labels = [a["nazwa"] for a in analiza["szczegoly"]]
+    chart_values = [a["wartosc"] for a in analiza["szczegoly"]]
 
-    return templates.TemplateResponse("index.html", {
+    # 3. Pobieramy dane NBP dla wykresu
+    nbp = {
+        "usd": await get_nbp_history("usd"),
+        "eur": await get_nbp_history("eur"),
+        "gbp": await get_nbp_history("gbp"),
+        "chf": await get_nbp_history("chf")
+    }
+
+    return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "podsumowanie": analysis["podsumowanie_portfela"],
-        "aktywa": all_assets
+        "podsumowanie": analiza["podsumowanie_portfela"],
+        "detale": analiza["szczegoly"],
+        "labels": chart_labels,
+        "values": chart_values,
+        "nbp_history": nbp
     })
 
 #ENDPOINT DO ZAPISYWANIA DANYCH
-@app.post("/aktywa", response_model=AssetResponse)
-async def create_asset(asset_data: AssetCreate, db: AsyncSession = Depends(get_db)):
-    #Tworznie obiektu klasy asset - dane biorę z obiektu asset_data:
-    new_asset = Asset(
-        name = asset_data.name,
-        ticker = asset_data.ticker,
-        amount = asset_data.amount,
-        purchase_price = asset_data.purchase_price
-    )
-    #Dodaję to do sesji - planuję to zapisać.
-    db.add(new_asset)
-    await db.flush() #pobiera ID zanim zrobi commit
-    #Tworzenie śladu w historii:
-    history = Transaction(
-        asset_id = new_asset.id,
-        amount = asset_data.amount,
-        price_at_date = asset_data.purchase_price,
-    )
-    db.add(history) #Dodaję to do sesji
-    #Wysyłam dane do postgresa.
+@app.post("/aktywa")
+async def create_asset(
+        name: str = Form(...),
+        ticker: str = Form(...),
+        amount: float = Form(...),
+        price: float = Form(...),
+        db: AsyncSession = Depends(get_db)):
+    # Zamieniam ticker na duże litery (np. usd -> USD)
+    ticker_upper = ticker.upper()
+
+    # Sprawdzam, czy takie aktywo już jest w bazie
+    query = select(Asset).where(Asset.ticker == ticker_upper)
+    result = await db.execute(query)
+    existing_asset = result.scalar_one_or_none()
+
+    if existing_asset:
+        # LOGIKA DOKUPOWANIA - średnia ważona
+        old_value = existing_asset.amount * existing_asset.purchase_price
+        new_purchase_value = amount * price
+        existing_asset.amount += amount
+        existing_asset.purchase_price = (old_value + new_purchase_value) / existing_asset.amount
+
+        # Dodaje wpis do historii dla istniejącego aktywa
+        db.add(Transaction(asset_id=existing_asset.id, amount=amount, price_at_date=price))
+    else:
+        # Logika wpisu
+        new_asset = Asset(name=name, ticker=ticker_upper, amount=amount, purchase_price=price)
+        db.add(new_asset)
+        await db.flush()
+        db.add(Transaction(asset_id=new_asset.id, amount=amount, price_at_date=price))
+
     await db.commit()
-    #Robię odświeżenie - czyli mówię pobierz z bazy to co zapisałem i uzupełnij mój obiekt o ewentualne braki.
+    return RedirectResponse(url="/", status_code=303)
+
+#Specjalny endpoint tylko dla API (Swaggera) - Tutaj używam AssetCreate i AssetResponse
+@app.post("/api/aktywa", response_model=AssetResponse)
+async def create_asset_api(asset_data: AssetCreate, db: AsyncSession = Depends(get_db)):
+    """Ten endpoint służy do dodawania danych przez maszyny/Swaggera używając JSON"""
+    new_asset = Asset(
+        name=asset_data.name,
+        ticker=asset_data.ticker.upper(),
+        amount=asset_data.amount,
+        purchase_price=asset_data.purchase_price
+    )
+    db.add(new_asset)
+    await db.commit()
     await db.refresh(new_asset)
-    #Zrwacam obiekt klasy Asset
     return new_asset
+@app.get("/usun/{id_asset}")
+async def remove_asset_web(id_asset: int, db: AsyncSession = Depends(get_db)):
+    # Szukam i usuwam
+    query = select(Asset).where(Asset.id == id_asset)
+    result = await db.execute(query)
+    asset = result.scalar_one_or_none()
+    if asset:
+        await db.delete(asset)
+        await db.commit()
+    return RedirectResponse(url="/", status_code=303)
 
 #ENDPOINT DO POBIERANIA WSZYSTKICH DANYCH:
 @app.get("/aktywa")
@@ -221,7 +284,6 @@ async def get_all_transactions(db: AsyncSession = Depends(get_db)):
 
 @app.get("/portfel/analiza")
 async def get_portfolio_analysis(db: AsyncSession = Depends(get_db)):
-    # 1. Pobieram aktywa z bazy:
     query = select(Asset)
     result = await db.execute(query)
     assets = result.scalars().all()
@@ -232,13 +294,9 @@ async def get_portfolio_analysis(db: AsyncSession = Depends(get_db)):
 
     for a in assets:
         invested = a.amount * a.purchase_price
-
-        # Pobieram kurs dla konkretnego tickera:
-        current_unit_price = await download_rate(a.ticker.lower())
-
-        # Jeśli NBP nie ma waluty, używam ceny zakupu (żeby nie było np. -99%):
-        if current_unit_price is None:
-            current_unit_price = a.purchase_price
+        # Pobieram kurs, jeśli brak (np. BTC) - używamy ceny zakupu
+        rate = await download_rate(a.ticker.lower())
+        current_unit_price = rate if rate is not None else a.purchase_price
 
         current_value = a.amount * current_unit_price
         profit_loss = current_value - invested
@@ -247,12 +305,13 @@ async def get_portfolio_analysis(db: AsyncSession = Depends(get_db)):
         total_current_value += current_value
 
         analysis.append({
+            "id": a.id,
             "nazwa": a.name,
+            "ticker": a.ticker,
             "ilosc": a.amount,
-            "koszt_zakupu_total": round(invested, 2),
-            "wartosc_biezaca_total": round(current_value, 2),
-            "zysk_strata": round(profit_loss, 2),
-            "procent": round((profit_loss / invested * 100), 2) if invested > 0 else 0
+            "koszt": round(invested, 2),
+            "wartosc": round(current_value, 2),
+            "zysk": round(profit_loss, 2)
         })
 
     return {
@@ -264,5 +323,11 @@ async def get_portfolio_analysis(db: AsyncSession = Depends(get_db)):
         "szczegoly": analysis
     }
 
-
+@app.get("/historia-widok", response_class=HTMLResponse)
+async def history_view(request: Request, db: AsyncSession = Depends(get_db)):
+    # Pobieram transakcje połączone z nazwami aktywów (JOIN)
+    query = select(Transaction, Asset).join(Asset)
+    result = await db.execute(query)
+    history_data = result.all()
+    return templates.TemplateResponse("history.html", {"request": request, "history": history_data})
 

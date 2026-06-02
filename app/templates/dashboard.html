@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Investor | Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <div class="sidebar">
+        <h4 class="fw-bold mb-5 text-white"><i class="bi bi-graph-up-arrow text-danger"></i> INVESTOR</h4>
+        <nav class="nav flex-column">
+            <a class="nav-link active" href="/"><i class="bi bi-grid-fill me-3"></i> Dashboard</a>
+            <a class="nav-link" href="/historia-widok"><i class="bi bi-clock-history me-3"></i> Historia</a>
+            <a class="nav-link" href="/docs"><i class="bi bi-terminal me-3"></i> API Console</a>
+
+            <div class="mt-auto">
+                <p class="small text-muted mb-2">RYNKI NBP</p>
+                <button class="btn btn-sm btn-outline-danger w-100 mb-2 text-start" onclick="changeTrend('usd')">USD/PLN</button>
+                <button class="btn btn-sm btn-outline-danger w-100 mb-2 text-start" onclick="changeTrend('eur')">EUR/PLN</button>
+                <button class="btn btn-sm btn-outline-danger w-100 mb-2 text-start" onclick="changeTrend('gbp')">GBP/PLN</button>
+                <button class="btn btn-sm btn-outline-danger w-100 text-start" onclick="changeTrend('chf')">CHF/PLN</button>
+            </div>
+        </nav>
+    </div>
+
+    <div class="main-content">
+        <div class="d-flex justify-content-between align-items-center mb-5">
+            <h1 class="fw-bold m-0">Twoje Inwestycje</h1>
+            <div class="d-flex gap-3">
+                <input type="text" id="assetSearch" class="form-control" style="width: 250px;" placeholder="Szukaj aktywa..." onkeyup="filterTable()">
+                <button class="btn btn-danger px-4" data-bs-toggle="modal" data-bs-target="#addModal">+ NOWY WPIS</button>
+            </div>
+        </div>
+
+        <div class="row g-4 mb-5 text-center">
+            <div class="col-md-4"><div class="stat-card"><p class="card-title">Koszt</p><h2 class="fw-bold">{{ podsumowanie.calkowity_koszt }} zł</h2></div></div>
+            <div class="col-md-4"><div class="stat-card"><p class="card-title">Wartość</p><h2 class="fw-bold">{{ podsumowanie.calkowita_wartosc }} zł</h2></div></div>
+            <div class="col-md-4"><div class="stat-card" style="border-bottom: 3px solid var(--accent-red)">
+                <p class="card-title">Zysk / Strata</p><h2 class="fw-bold {% if podsumowanie.laczny_zysk_strata >= 0 %}text-success{% else %}text-danger{% endif %}">{{ podsumowanie.laczny_zysk_strata }} zł</h2>
+            </div></div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-5">
+                <div class="stat-card">
+                    <h5 id="trendTitle" class="fw-bold mb-4">Trend USD/PLN</h5>
+                    <div style="height: 250px; position: relative;"><canvas id="trendChart"></canvas></div>
+                </div>
+            </div>
+            <div class="col-lg-7">
+                <div class="table-container">
+                    <table class="table align-middle" id="mainTable">
+                        <thead><tr><th>AKTYWO</th><th>ILOŚĆ</th><th>ZYSK</th><th class="text-end">AKCJE</th></tr></thead>
+                        <tbody>
+                            {% for d in detale %}
+                            <tr>
+                                <td><span class="badge-ticker me-2">{{ d.ticker }}</span><b>{{ d.nazwa }}</b></td>
+                                <td>{{ d.ilosc }}</td>
+                                <td class="{% if d.zysk >= 0 %}text-success{% else %}text-danger{% endif %} fw-bold">{{ d.zysk }} zł</td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-outline-light me-1" onclick="openBuyModal({{ d.id }}, '{{ d.nazwa }}')"><i class="bi bi-plus-circle"></i></button>
+                                    <a href="/usun/{{ d.id }}" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash3"></i></a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODALE -->
+    <div class="modal fade" id="addModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content p-4">
+        <form action="/aktywa" method="post">
+            <h4 class="fw-bold mb-4">Dodaj Inwestycję</h4>
+            <input type="text" name="name" class="form-control mb-3" placeholder="Nazwa" required>
+            <input type="text" name="ticker" class="form-control mb-3" placeholder="Ticker (np. USD)" required>
+            <div class="row"><div class="col"><input type="number" step="any" name="amount" class="form-control mb-3" placeholder="Ilość" required></div>
+            <div class="col"><input type="number" step="any" name="price" class="form-control mb-3" placeholder="Cena" required></div></div>
+            <button type="submit" class="btn btn-danger w-100 mt-2">ZAPISZ</button>
+        </form>
+    </div></div></div>
+
+    <div class="modal fade" id="buyModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content p-4">
+        <h4 class="fw-bold mb-4">Dokup: <span id="buyAssetName" class="text-danger"></span></h4>
+        <input type="hidden" id="buyAssetId">
+        <input type="number" step="any" id="buyAmount" class="form-control mb-3" placeholder="Dodatkowa ilość">
+        <input type="number" step="any" id="buyPrice" class="form-control mb-4" placeholder="Cena">
+        <button onclick="submitBuy()" class="btn btn-danger w-100">POTWIERDŹ</button>
+    </div></div></div>
+
+    <script>
+        const nbpData = {{ nbp_history | tojson }};
+        let trendChart;
+        function initChart(cur) {
+            const ctx = document.getElementById('trendChart').getContext('2d');
+            if (trendChart) trendChart.destroy();
+            trendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: nbpData[cur].dates,
+                    datasets: [{ data: nbpData[cur].rates, borderColor: '#e60000', backgroundColor: 'rgba(230,0,0,0.1)', fill: true, tension: 0.4, pointRadius: 0 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                    scales: { x: { display: false }, y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555' } } }
+                }
+            });
+        }
+        function changeTrend(cur) { document.getElementById('trendTitle').innerText = `Trend ${cur.toUpperCase()}/PLN`; initChart(cur); }
+        function filterTable() {
+            let filter = document.getElementById("assetSearch").value.toUpperCase();
+            let tr = document.getElementById("mainTable").getElementsByTagName("tr");
+            for (let i = 1; i < tr.length; i++) { tr[i].style.display = tr[i].innerText.toUpperCase().includes(filter) ? "" : "none"; }
+        }
+        function openBuyModal(id, name) { document.getElementById('buyAssetId').value = id; document.getElementById('buyAssetName').innerText = name; new bootstrap.Modal(document.getElementById('buyModal')).show(); }
+        async function submitBuy() {
+            const id = document.getElementById('buyAssetId').value;
+            const a = document.getElementById('buyAmount').value;
+            const p = document.getElementById('buyPrice').value;
+            await fetch(`/aktywa/${id}/dokup?added_amount=${a}&added_price=${p}`, { method: 'PUT' });
+            location.reload();
+        }
+        initChart('usd');
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
