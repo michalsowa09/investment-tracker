@@ -10,33 +10,58 @@ import httpx
 from .schemas import AssetCreate, AssetResponse
 from .database import engine, get_db
 from .models import Base, Asset, Transaction
+#Import redisa:
+import redis
+from sqladmin import Admin, ModelView
+#sqladmin:
+from sqladmin import Admin, ModelView
+from sqladmin.authentication import AuthenticationBackend
+from starlette.responses import RedirectResponse
+
+# Połączenie z Redisem (hostem jest nazwa serwisu z docker-compose)
+cache = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
+
 app = FastAPI(title = "Monitor inwestycji") #Tworze swoją aplikację i nadaje jej tytuł.
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
+
 async def download_rate(currency: str):
-    #Adres api NBP (format JSON) - waluta jest zmienna:
+    # 1. Sprawdzam najpierw w Redisie, czy nie mam już tego kursu zapisanego
+    # Używam klucza z nazwą waluty, np. "rate_usd"
+    cached_rate = cache.get(f"rate_{currency}")
+
+    if cached_rate:
+        print(f"INFO: Znalazłem kurs {currency} w pamięci cache. Nie muszę się zwracać do NBP.")
+        return float(cached_rate)
+
+    # 2. Jeśli nie było w Redisie, to idę normalnie do NBP:
     url = f"https://api.nbp.pl/api/exchangerates/rates/a/{currency}/?format=json"
 
-    #Tworzenie "klienta" - który zadzwoni do banku:
     async with httpx.AsyncClient() as client:
         try:
+            # Robię zapytanie do banku:
             response = await client.get(url, timeout=5.0)
-
-            #To polecenie samo rzuci błędem, jeśli kod to np. 404 lub 500
             response.raise_for_status()
 
             data = response.json()
             rate = data["rates"][0]["mid"]
+
+            # 3. Skoro udało się pobrać kurs, zapisuję go w Redisie.
+            # setex oznacza 'set with expiration'.
+            # Zapisuję na 600 sekund (czyli 10 minut), żeby nie męczyć serwera.
+            cache.setex(f"rate_{currency}", 600, str(rate))
+
             return rate
 
         except httpx.HTTPStatusError as e:
             print(f"BŁĄD API: NBP zwrócił kod {e.response.status_code} dla waluty {currency}")
             return None
         except httpx.RequestError as e:
-            print(f"BŁĄD POŁĄCZENIA: Nie można połączyć się z serwerem NBP: {e}")
+            print(f"BŁĄD POŁĄCZENIA: Problem z serwerem NBP: {e}")
             return None
         except (KeyError, IndexError) as e:
-            print(f"BŁAD DANYCH: Nieoczekiwany format JSON z NBP: {e}")
+            print(f"BŁĄD DANYCH: JSON z NBP ma inny format niż zwykle: {e}")
+            return None
         except Exception as e:
             print(f"NIEOCZEKIWANY BŁĄD: {e}")
             return None
@@ -331,3 +356,76 @@ async def history_view(request: Request, db: AsyncSession = Depends(get_db)):
     history_data = result.all()
     return templates.TemplateResponse("history.html", {"request": request, "history": history_data})
 
+# -------------------------- PANEL SQL ADMINA -------------------------------
+#Ta funckja decyduje o tym, kto może wejść do bazy danych.
+class AdminAuth(AuthenticationBackend):
+    # Ta funkcja uruchamia się, gdy wpisze się login i hasło na stronie logowania
+    async def login(self, request: Request) -> bool:
+        form = await request.form()
+        username = form.get("username")
+        password = form.get("password")
+
+        # Weryfikacja loginu i hasła (w prawdziwym systemie byłyby w bazie danych)
+        if username == "admin" and password == "admin123":
+            # Jeśli dane są poprawne, wrzucam do "ciasteczka" sesji żeton (token)
+            # Dzięki temu przeglądarka pamięta, że jestem zalogowany
+            request.session.update({"token": "tajny-zeton-dostepu"})
+            return True
+        return False
+
+    # Ta funkcja czyści sesję, gdy kliknie się "Wyloguj"
+    async def logout(self, request: Request) -> bool:
+        request.session.clear()
+        return True
+
+    # NAJWAŻNIEJSZA FUNKCJA: Uruchamia się przy KAŻDYM kliknięciu w panelu admina.
+    # Sprawdza, czy użytkownik ma wciąż ważny żeton (token).
+    async def authenticate(self, request: Request) -> bool:
+        token = request.session.get("token")
+        if not token:
+            return False  # Brak żetonu = wyrzucenie do strony logowania
+        return True
+
+
+# Tworze obiekt autoryzacji.
+# secret_key to "klucz-matka" służący do szyfrowania sesji, by nikt jej nie podrobił.
+authentication_backend = AdminAuth(secret_key="nasz-bardzo-trudny-klucz-123")
+
+# 2. INICJALIZACJA GŁÓWNEGO OBIEKTU ADMINA
+# Łącze: aplikację FastAPI (app), silnik bazy danych (engine) i naszego strażnika.
+admin = Admin(app, engine, authentication_backend=authentication_backend)
+
+
+# 3. KONFIGURACJA WIDOKU TABELI "ASSET" (Aktywa)
+# Tutaj projektuje to, co Admin zobaczy po kliknięciu w zakładkę Aktywa.
+class AssetAdmin(ModelView, model=Asset):
+    # Lista kolumn, które mają się wyświetlać w tabeli głównej
+    column_list = [Asset.id, Asset.name, Asset.ticker, Asset.amount, Asset.purchase_price]
+
+    # Dodajemy lupkę (wyszukiwarkę), która przeszuka bazę po nazwie lub tickerze
+    column_searchable_list = [Asset.name, Asset.ticker]
+
+    # Nazwy wyświetlane w menu (spolszczenie)
+    name = "Aktywo"
+    name_plural = "Zarządzaj Aktywami"
+
+    # Ikonka z biblioteki FontAwesome (monety)
+    icon = "fa-solid fa-coins"
+
+
+# 4. KONFIGURACJA WIDOKU TABELI "TRANSACTION" (Historia)
+class TransactionAdmin(ModelView, model=Transaction):
+    # Pokazujemy ID, ID aktywa (powiązanie), ilość i datę z bazy
+    column_list = [Transaction.id, Transaction.asset_id, Transaction.amount, Transaction.created_at]
+
+    name = "Transakcja"
+    name_plural = "Historia Operacji"
+
+    # Ikonka zegara/historii
+    icon = "fa-solid fa-clock-rotate-left"
+
+
+# 5. REJESTRACJA WIDOKÓW
+# Na koniec musimy "zameldować" nasze widoki w głównym obiekcie admina.
+admin.add_view(AssetAdmin)
+admin.add_view(TransactionAdmin)
