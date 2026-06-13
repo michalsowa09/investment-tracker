@@ -33,17 +33,17 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 async def download_rate(currency: str):
-    # 1. Sprawdzam najpierw w Redisie, czy nie mam już tego kursu zapisanego
-    # Używam klucza z nazwą waluty, np. "rate_usd"
-    cached_rate = cache.get(f"rate_{currency}")
+    # 1. Próbujemy pobrać z cache (w bloku try/except, żeby nie wywaliło apki!)
+    try:
+        cached_rate = cache.get(f"rate_{currency}")
+        if cached_rate:
+            print(f"INFO: Pobrano {currency} z cache")
+            return float(cached_rate)
+    except Exception as e:
+        # Jeśli nie ma Redisa, po prostu wypisujemy info w logach i idziemy dalej
+        print(f"INFO: Redis niedostępny ({e}). Pobieram bezpośrednio z NBP.")
 
-    if cached_rate:
-        print(f"INFO: Znalazłem kurs {currency} w pamięci cache. Nie muszę się zwracać do NBP.")
-        return float(cached_rate)
-
-    # 2. Jeśli nie było w Redisie, to idę normalnie do NBP:
     url = f"https://api.nbp.pl/api/exchangerates/rates/a/{currency}/?format=json"
-
     async with httpx.AsyncClient() as client:
         try:
             # Robię zapytanie do banku:
