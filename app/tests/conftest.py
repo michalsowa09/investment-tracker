@@ -3,15 +3,15 @@ from app.database import engine
 from app.models import Base
 
 
-# Usuwamy stąd funkcję event_loop - niech pytest-asyncio sam ją sobie robi
-@pytest.fixture(autouse=True)  # Domyślny zasięg to "function"
+# Zmieniamy scope na "function" (domyślny) - to naprawi błąd ScopeMismatch
+@pytest.fixture(autouse=True)
 async def setup_database():
-    # 1. Przed każdym testem twórz tabele
+    # 1. Przed KAŻDYM testem tworzymy tabele od zera
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    yield  # Tu wykonuje się test
+    yield  # Tu uruchamia się test
 
-    # 2. Po każdym teście czyść bazę
+    # 2. Po KAŻDYM teście czyścimy bazę, żeby następny miał czyste pole
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
