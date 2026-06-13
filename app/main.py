@@ -21,7 +21,7 @@ from starlette.responses import RedirectResponse
 
 # Połączenie z Redisem (hostem jest nazwa serwisu z docker-compose)
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-cache = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
+cache = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
 
 app = FastAPI(title = "Monitor inwestycji") #Tworze swoją aplikację i nadaje jej tytuł.
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
