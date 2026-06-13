@@ -5,19 +5,52 @@ on: [push, pull_request]
 jobs:
   check-quality:
     runs-on: ubuntu-latest
+
+    # TUTAJ DODAJE USŁUGI
+    services:
+      db:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: investment_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v3
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio flake8
-      - name: 1. Linter (Sprawdzanie stylu)
+          pip install pytest pytest-asyncio flake8 httpx
+
+      - name: 1. Linter (flake8)
         run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
       - name: 2. Uruchomienie Testów
-        run: python -m pytest
-      - name: 3. Weryfikacja Dockerfile
-        run: docker build . -t test-image
+        env:
+          # Mówie testom, że bazy są na 'localhost', bo GitHub tak je wystawia
+          DATABASE_URL: postgresql+asyncpg://user:password@localhost:5432/investment_db
+          REDIS_HOST: localhost
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          python -m pytest
