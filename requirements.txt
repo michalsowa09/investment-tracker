@@ -9,3 +9,6 @@ python-multipart==0.0.9
 redis==5.0.1
 sqladmin==0.16.0
 itsdangerous==2.1.2
+pytest==7.4.4
+pytest-asyncio==0.21.1
+flake8==7.0.0
