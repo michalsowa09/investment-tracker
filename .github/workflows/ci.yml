@@ -49,10 +49,10 @@ jobs:
       - name: 2. Uruchomienie Testów
         env:
           # Mówie testom, że bazy są na 'localhost', bo GitHub tak je wystawia
-          DATABASE_URL: postgresql+asyncpg://user:password@localhost:5432/investment_db
-          REDIS_HOST: localhost # BARDZO WAŻNE
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          ADMIN_USERNAME: admin
-          ADMIN_PASSWORD: admin123
+            DATABASE_URL: postgresql+asyncpg://user:password@localhost:5432/investment_db
+            REDIS_HOST: localhost
+            SECRET_KEY: ${{ secrets.SECRET_KEY }}
+            ADMIN_USERNAME: admin
+            ADMIN_PASSWORD: admin123
         run: |
           python -m pytest

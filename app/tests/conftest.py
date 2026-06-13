@@ -1,17 +1,20 @@
 import pytest
+import asyncio
 from app.database import engine
 from app.models import Base
 
+# To mówi pytestowi, żeby użył odpowiedniej wtyczki asynchronicznej
+pytest_plugins = ["pytest_asyncio"]
 
-# Ten dekorator powie pytestowi, żeby przygotował bazę przed wszystkimi testami
+
 @pytest.fixture(scope="session", autouse=True)
 async def setup_database():
-    # 1. Tworzymy tabele w czystej bazie GitHuba
+    # Tworzymy tabele przed testami
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    yield  # Tu uruchomiają się testy z test_main.py
+    yield
 
-    # 2. Po testach czysczona jest baza
+    # Czyścimy bazę po testach
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
