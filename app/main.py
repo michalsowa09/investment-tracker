@@ -320,14 +320,23 @@ async def get_portfolio_analysis(db: AsyncSession = Depends(get_db)):
     result = await db.execute(query)
     assets = result.scalars().all()
 
+    nbp_table = {}
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get("https://api.nbp.pl/api/exchangerates/tables/a?format=json", timeout=5.0)
+            if response.status_code == 200:
+                data = response.json()[0]
+                nbp_table = {r['code'].lower(): r['mid'] for r in data['rates']}
+    except:
+        pass
+
     analysis = []
     total_invested = 0
     total_current_value = 0
 
     for a in assets:
         invested = a.amount * a.purchase_price
-        # Pobieram kurs, jeśli brak (np. BTC) - używamy ceny zakupu
-        rate = await download_rate(a.ticker.lower())
+        rate = nbp_table.get(a.ticker.lower())
         current_unit_price = rate if rate is not None else a.purchase_price
 
         current_value = a.amount * current_unit_price
