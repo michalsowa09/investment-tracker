@@ -360,7 +360,7 @@ async def history_view(request: Request, db: AsyncSession = Depends(get_db)):
 
 # -------------------------- PANEL SQL ADMINA -------------------------------
 #Ta funckja decyduje o tym, kto może wejść do bazy danych.
-# 1. Definiuje klasę "Strażnika"
+#  Definiuje klasę "Strażnika"
 class AdminAuth(AuthenticationBackend):
     async def login(self, request: Request) -> bool:
         form = await request.form()
@@ -375,20 +375,18 @@ class AdminAuth(AuthenticationBackend):
             return True
         return False
 
-    # BRAKOWAŁO TEJ FUNKCJI: Obsługa wylogowania
+    #  Obsługa wylogowania
     async def logout(self, request: Request) -> bool:
         request.session.clear()
         return True
 
-    # BRAKOWAŁO TEJ FUNKCJI: Sprawdzanie czy użytkownik jest zalogowany
+    # Sprawdzanie czy użytkownik jest zalogowany
     async def authenticate(self, request: Request) -> bool:
         token = request.session.get("token")
         if not token:
             return False
         return True
 
-# --- KONIEC KLASY ---
-# Poniższe linie muszą być od SAMEJ LEWEJ krawędzi (bez spacji/tabulatora):
 
 # Klucz do szyfrowania sesji (używam tego, który wygenerowałem wcześniej)
 secret_key = os.getenv("SECRET_KEY", "476e3305a26c483d717f91c95333f269a834c8965d836371c6d32865c363c8a9")
@@ -405,7 +403,7 @@ class AssetAdmin(ModelView, model=Asset):
     # Lista kolumn, które mają się wyświetlać w tabeli głównej
     column_list = [Asset.id, Asset.name, Asset.ticker, Asset.amount, Asset.purchase_price]
 
-    # Dodajem lupkę (wyszukiwarkę), która przeszuka bazę po nazwie lub tickerze
+    # Dodaje lupkę (wyszukiwarkę), która przeszuka bazę po nazwie lub tickerze
     column_searchable_list = [Asset.name, Asset.ticker]
 
     # Nazwy wyświetlane w menu
@@ -418,7 +416,7 @@ class AssetAdmin(ModelView, model=Asset):
 
 # 4. KONFIGURACJA WIDOKU TABELI "TRANSACTION" (Historia)
 class TransactionAdmin(ModelView, model=Transaction):
-    # Pokazujem ID, ID aktywa (powiązanie), ilość i datę z bazy
+    # Pokazuje ID, ID aktywa (powiązanie), ilość i datę z bazy
     column_list = [Transaction.id, Transaction.asset_id, Transaction.amount, Transaction.created_at]
 
     name = "Transakcja"
