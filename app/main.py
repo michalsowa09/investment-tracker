@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import or_
 import httpx
+import os
 # AssetCreate i AssetResponse zostają dla Swaggera, ale POST ich nie używa
 from .schemas import AssetCreate, AssetResponse
 from .database import engine, get_db
@@ -358,43 +359,44 @@ async def history_view(request: Request, db: AsyncSession = Depends(get_db)):
 
 # -------------------------- PANEL SQL ADMINA -------------------------------
 #Ta funckja decyduje o tym, kto może wejść do bazy danych.
+# 1. Definiuje klasę "Strażnika"
 class AdminAuth(AuthenticationBackend):
-    # Ta funkcja uruchamia się, gdy wpisze się login i hasło na stronie logowania
     async def login(self, request: Request) -> bool:
         form = await request.form()
         username = form.get("username")
         password = form.get("password")
 
-        # Weryfikacja loginu i hasła (w prawdziwym systemie byłyby w bazie danych)
-        if username == "admin" and password == "admin123":
-            # Jeśli dane są poprawne, wrzucam do "ciasteczka" sesji żeton (token)
-            # Dzięki temu przeglądarka pamięta, że jestem zalogowany
-            request.session.update({"token": "tajny-zeton-dostepu"})
+        env_user = os.getenv("ADMIN_USERNAME", "admin")
+        env_pass = os.getenv("ADMIN_PASSWORD", "admin123")
+
+        if username == env_user and password == env_pass:
+            request.session.update({"token": "secret-token"})
             return True
         return False
 
-    # Ta funkcja czyści sesję, gdy kliknie się "Wyloguj"
+    # BRAKOWAŁO TEJ FUNKCJI: Obsługa wylogowania
     async def logout(self, request: Request) -> bool:
         request.session.clear()
         return True
 
-    # NAJWAŻNIEJSZA FUNKCJA: Uruchamia się przy KAŻDYM kliknięciu w panelu admina.
-    # Sprawdza, czy użytkownik ma wciąż ważny żeton (token).
+    # BRAKOWAŁO TEJ FUNKCJI: Sprawdzanie czy użytkownik jest zalogowany
     async def authenticate(self, request: Request) -> bool:
         token = request.session.get("token")
         if not token:
-            return False  # Brak żetonu = wyrzucenie do strony logowania
+            return False
         return True
 
+# --- KONIEC KLASY ---
+# Poniższe linie muszą być od SAMEJ LEWEJ krawędzi (bez spacji/tabulatora):
 
-# Tworze obiekt autoryzacji.
-# secret_key to "klucz-matka" służący do szyfrowania sesji, by nikt jej nie podrobił.
-authentication_backend = AdminAuth(secret_key="nasz-bardzo-trudny-klucz-123")
+# Klucz do szyfrowania sesji (używam tego, który wygenerowałem wcześniej)
+secret_key = os.getenv("SECRET_KEY", "476e3305a26c483d717f91c95333f269a834c8965d836371c6d32865c363c8a9")
 
-# 2. INICJALIZACJA GŁÓWNEGO OBIEKTU ADMINA
-# Łącze: aplikację FastAPI (app), silnik bazy danych (engine) i naszego strażnika.
+# Tworze obiekt autoryzacji
+authentication_backend = AdminAuth(secret_key=secret_key)
+
+# Podpinam to do Admina
 admin = Admin(app, engine, authentication_backend=authentication_backend)
-
 
 # 3. KONFIGURACJA WIDOKU TABELI "ASSET" (Aktywa)
 # Tutaj projektuje to, co Admin zobaczy po kliknięciu w zakładkę Aktywa.
@@ -402,10 +404,10 @@ class AssetAdmin(ModelView, model=Asset):
     # Lista kolumn, które mają się wyświetlać w tabeli głównej
     column_list = [Asset.id, Asset.name, Asset.ticker, Asset.amount, Asset.purchase_price]
 
-    # Dodajemy lupkę (wyszukiwarkę), która przeszuka bazę po nazwie lub tickerze
+    # Dodajem lupkę (wyszukiwarkę), która przeszuka bazę po nazwie lub tickerze
     column_searchable_list = [Asset.name, Asset.ticker]
 
-    # Nazwy wyświetlane w menu (spolszczenie)
+    # Nazwy wyświetlane w menu
     name = "Aktywo"
     name_plural = "Zarządzaj Aktywami"
 
@@ -415,7 +417,7 @@ class AssetAdmin(ModelView, model=Asset):
 
 # 4. KONFIGURACJA WIDOKU TABELI "TRANSACTION" (Historia)
 class TransactionAdmin(ModelView, model=Transaction):
-    # Pokazujemy ID, ID aktywa (powiązanie), ilość i datę z bazy
+    # Pokazujem ID, ID aktywa (powiązanie), ilość i datę z bazy
     column_list = [Transaction.id, Transaction.asset_id, Transaction.amount, Transaction.created_at]
 
     name = "Transakcja"
@@ -426,6 +428,6 @@ class TransactionAdmin(ModelView, model=Transaction):
 
 
 # 5. REJESTRACJA WIDOKÓW
-# Na koniec musimy "zameldować" nasze widoki w głównym obiekcie admina.
+# Na koniec muszę "zameldować" widoki w głównym obiekcie admina.
 admin.add_view(AssetAdmin)
 admin.add_view(TransactionAdmin)

@@ -1,26 +1,23 @@
-name: Python Quality Check
+name: Continuous Integration
 
 on: [push, pull_request]
 
 jobs:
-  test-and-lint:
+  check-quality:
     runs-on: ubuntu-latest
     steps:
-      - name: Pobranie kodu
-        uses: actions/checkout@v3
-
-      - name: Ustawienie Pythona
+      - uses: actions/checkout@v3
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
-      - name: Instalacja bibliotek
+      - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install flake8
-
-      - name: Sprawdzenie skladni (Linting)
+          pip install pytest pytest-asyncio flake8
+      - name: 1. Linter (Sprawdzanie stylu)
         run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-
-      - name: Weryfikacja budowania obrazu Docker
+      - name: 2. Uruchomienie Testów
+        run: pytest
+      - name: 3. Weryfikacja Dockerfile
         run: docker build . -t test-image
